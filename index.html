@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Grabador de Video con Código de Barras</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f0f0;
+      margin: 0;
+      padding: 1em;
+      text-align: center;
+    }
+    video {
+      width: 100%;
+      max-width: 400px;
+      border: 2px solid #333;
+      border-radius: 10px;
+    }
+    button {
+      display: block;
+      margin: 1em auto;
+      padding: 1em;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #start { background: #28a745; color: white; }
+    #stop { background: #dc3545; color: white; }
+    input {
+      padding: 0.8em;
+      width: 90%;
+      margin: 1em auto;
+      font-size: 16px;
+    }
+    .video-item {
+      margin: 1em 0;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Grabador con Lector de Códigos de Barras</h2>
+
+  <video id="preview" autoplay muted playsinline></video>
+
+  <button id="start">🎬 Iniciar grabación</button>
+  <button id="stop" disabled>🛑 Detener grabación</button>
+
+  <input type="text" id="search" placeholder="Buscar por código de barras...">
+
+  <div id="videos"></div>
+
+  <audio id="startSound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
+  <audio id="stopSound" src="https://actions.google.com/sounds/v1/cartoon/pop.ogg"></audio>
+
+  <script src="https://unpkg.com/@zxing/library@latest"></script>
+
+  <script>
+    const video = document.getElementById("preview");
+    const startBtn = document.getElementById("start");
+    const stopBtn = document.getElementById("stop");
+    const searchInput = document.getElementById("search");
+    const videosContainer = document.getElementById("videos");
+    const startSound = document.getElementById("startSound");
+    const stopSound = document.getElementById("stopSound");
+
+    let mediaRecorder;
+    let stream;
+    let recordedChunks = [];
+    let currentCode = null;
+    let scanInterval;
+    const dbKey = "videosDB";
+
+    async function initCamera() {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+      video.srcObject = stream;
+    }
+
+    function startBarcodeScanner() {
+      const codeReader = new ZXing.BrowserMultiFormatReader();
+      scanInterval = setInterval(async () => {
+        try {
+          const result = await codeReader.decodeOnceFromVideoElement(video);
+          if (result && result.text) {
+            currentCode = result.text;
+            console.log("Código detectado:", currentCode);
+          }
+        } catch (e) {}
+      }, 1000);
+    }
+
+    function startRecording() {
+      recordedChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+      mediaRecorder.onstop = saveVideo;
+      mediaRecorder.start();
+    }
+
+    function stopRecording() {
+      mediaRecorder.stop();
+    }
+
+    startBtn.onclick = () => {
+      currentCode = null;
+      startRecording();
+      startBarcodeScanner();
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      startSound.play();
+    };
+
+    stopBtn.onclick = () => {
+      clearInterval(scanInterval);
+      setTimeout(() => {
+        stopRecording();
+        stopBtn.disabled = true;
+        startBtn.disabled = false;
+        stopSound.play();
+      }, 2000); // tiempo para capturar último código
+    };
+
+    function saveVideo() {
+      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const name = currentCode ? currentCode : `video-sin-codigo-${Date.now()}`;
+
+      const videoData = {
+        name,
+        url,
+        createdAt: Date.now()
+      };
+
+      const existing = JSON.parse(localStorage.getItem(dbKey) || "[]");
+      existing.push(videoData);
+      localStorage.setItem(dbKey, JSON.stringify(existing));
+      renderVideos();
+    }
+
+    function getStoredVideos() {
+      const stored = JSON.parse(localStorage.getItem(dbKey) || "[]");
+      const now = Date.now();
+      const valid = stored.filter(v => now - v.createdAt < 1000 * 60 * 60 * 24 * 30); // 30 días
+      localStorage.setItem(dbKey, JSON.stringify(valid));
+      return valid;
+    }
+
+    function renderVideos(filter = "") {
+      const videos = getStoredVideos().filter(v => v.name.includes(filter));
+      videosContainer.innerHTML = "";
+      videos.forEach(video => {
+        const div = document.createElement("div");
+        div.className = "video-item";
+        div.innerHTML = `
+          <strong>${video.name}</strong><br>
+          <video src="${video.url}" controls width="300"></video>
+        `;
+        videosContainer.appendChild(div);
+      });
+    }
+
+    searchInput.oninput = (e) => {
+      renderVideos(e.target.value.trim());
+    };
+
+    initCamera().then(renderVideos);
+  </script>
+</body>
+</html>
